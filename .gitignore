@@ -72,6 +72,10 @@ data/processed/*.parquet
 *.crt
 secrets/
 
+# ── Poetry (não deve ser lido pelo Streamlit Cloud) ──────────
+pyproject.toml
+poetry.lock
+
 # ── Claude AI / Configuração interna ─────────────────────────
 claude.md
 CLAUDE.md
