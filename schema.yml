@@ -1,0 +1,61 @@
+version: 2
+
+# ─────────────────────────────────────────────────────────────
+# Finance — Top-level schema.yml
+# Defines sources for dbt raw layer ingestion
+# ─────────────────────────────────────────────────────────────
+
+sources:
+  - name: raw
+    description: "Bronze layer — raw ingested data, never modified"
+    schema: raw
+    database: finance
+    loaded_at_field: loaded_at
+    freshness:
+      warn_after: {count: 1, period: day}
+      error_after: {count: 3, period: day}
+
+    tables:
+      - name: cotacoes_raw
+        description: "Daily OHLCV prices from yfinance for B3, NYSE, NASDAQ"
+        columns:
+          - name: id
+            description: "Auto-increment surrogate key"
+            tests: [unique, not_null]
+          - name: ticker
+            description: "Stock ticker symbol (e.g. PETR4)"
+            tests: [not_null]
+          - name: date
+            description: "Trading date"
+            tests: [not_null]
+          - name: close
+            description: "Closing price"
+            tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  min_value: 0.01
+          - name: loaded_at
+            description: "Timestamp of ingestion"
+            tests: [not_null]
+
+      - name: empresas_raw
+        description: "Company metadata from yfinance and manual curation"
+        columns:
+          - name: ticker
+            tests: [unique, not_null]
+          - name: nome
+            tests: [not_null]
+
+      - name: macro_raw
+        description: "Macroeconomic indicators from BCB SGS and FRED"
+        columns:
+          - name: indicador
+            tests: [not_null]
+          - name: data
+            tests: [not_null]
+          - name: valor
+            tests: [not_null]
+          - name: fonte
+            tests:
+              - accepted_values:
+                  values: ['BCB/SGS', 'FRED', 'IBGE', 'manual']

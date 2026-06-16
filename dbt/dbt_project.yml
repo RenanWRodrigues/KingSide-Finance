@@ -1,0 +1,68 @@
+name: "finance"
+version: "1.0.0"
+config-version: 2
+
+profile: "finance"
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  start_date: "2019-01-01"
+  data_source: "yfinance"
+  environment: "{{ env_var('DBT_TARGET', 'dev') }}"
+
+models:
+  finance:
+    +persist_docs:
+      relation: true
+      columns: true
+
+    staging:
+      +schema: staging
+      +materialized: view
+      +tags: ["staging", "elt"]
+
+    intermediate:
+      +schema: intermediate
+      +materialized: ephemeral
+      +tags: ["intermediate"]
+
+    marts:
+      +schema: marts
+      +materialized: table
+      +tags: ["marts", "gold"]
+
+      dimensions:
+        +materialized: table
+        +tags: ["dimensions"]
+
+      facts:
+        +materialized: incremental
+        +unique_key: id
+        +incremental_strategy: merge
+        +on_schema_change: fail
+        +tags: ["facts", "incremental"]
+
+      analytics:
+        +materialized: table
+        +tags: ["analytics", "reporting"]
+
+snapshots:
+  finance:
+    +target_schema: snapshots
+    +strategy: timestamp
+    +updated_at: updated_at
+
+seeds:
+  finance:
+    +schema: seeds
+    +quote_columns: false

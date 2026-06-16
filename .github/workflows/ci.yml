@@ -1,0 +1,179 @@
+name: Finance CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/api
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Lint & Type Check
+  # ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install lint dependencies
+        run: pip install poetry && poetry install --only lint --no-root
+
+      - name: Ruff
+        run: ruff check app/ ml/ tests/
+
+      - name: Black
+        run: black --check app/ ml/ tests/
+
+      - name: MyPy
+        run: mypy app/ ml/ --ignore-missing-imports
+
+      - name: Bandit (security)
+        run: bandit -r app/ ml/ -ll
+
+  # ─────────────────────────────────────────────────────────────
+  # Unit & API Tests
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finance
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: finance_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: --health-cmd "redis-cli ping" --health-interval 10s
+        ports:
+          - 6379:6379
+
+    env:
+      APP_ENV: testing
+      SECRET_KEY: test-secret-key-at-least-32-chars-long
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: finance_test
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: test_password
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install poetry && poetry install --with test --no-root
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest tests/unit tests/api -v --cov=app --cov-report=xml --tb=short
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ─────────────────────────────────────────────────────────────
+  # dbt Validation
+  # ─────────────────────────────────────────────────────────────
+  dbt-validate:
+    name: dbt Compile & Test
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finance
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: finance_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+        ports:
+          - 5432:5432
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: finance_test
+      DBT_TARGET: dev
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: ${{ env.PYTHON_VERSION }} }
+      - run: pip install dbt-postgres
+      - run: cd dbt && dbt deps
+      - run: cd dbt && dbt compile
+      - run: cd dbt && dbt parse
+
+  # ─────────────────────────────────────────────────────────────
+  # Docker Build
+  # ─────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [test, dbt-validate]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/api/Dockerfile
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

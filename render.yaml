@@ -1,0 +1,58 @@
+databases:
+  - name: finance-postgres
+    databaseName: finance
+    user: finance
+    plan: free
+
+services:
+  - type: web
+    name: finance-api
+    plan: free
+    runtime: docker
+    dockerfilePath: ./docker/api/Dockerfile
+    dockerContext: .
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: finance-postgres
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: finance-postgres
+          property: port
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: finance-postgres
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: finance-postgres
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: finance-postgres
+          property: password
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        value: "6379"
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: API_WORKERS
+        value: "1"
+      - key: RATE_LIMIT_REQUESTS
+        value: "60"
+      - key: RATE_LIMIT_WINDOW
+        value: "60"
